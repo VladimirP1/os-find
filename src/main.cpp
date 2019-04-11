@@ -26,6 +26,7 @@ struct linux_dirent {
                               // 2.6.4); offset is (d_reclen - 1)
     */
 };
+
 using handler_type = std::vector<std::function<bool(
     std::string filename, struct stat*, const std::string&)>>;
 
@@ -73,27 +74,29 @@ void DFS(int fd, std::string path, std::string filename,
         for (size_t ofs = 0; ofs < ret2;) {
             chld_dirent = (linux_dirent*)(dentsbuf + ofs);
 
-            std::string chld_path = path + "/" + chld_dirent->d_name;
-
-            int chld_fd =
-                openat(fd, chld_dirent->d_name, O_RDONLY | O_NOFOLLOW);
-
-            if (chld_fd < 0 && errno == ELOOP) {
-                chld_fd = openat(fd, chld_dirent->d_name, O_PATH | O_NOFOLLOW);
-            }
-
-            if (chld_fd < 0) {
-                fprintf(stderr, "Could not open file %s: %s\n",
-                        chld_path.c_str(), strerror(errno));
-                goto error_open;
-            }
-
             if (strcmp(chld_dirent->d_name, ".") &&
                 strcmp(chld_dirent->d_name, "..")) {
+
+                std::string chld_path = path + "/" + chld_dirent->d_name;
+
+                int chld_fd =
+                    openat(fd, chld_dirent->d_name, O_NOFOLLOW);
+
+                if (chld_fd < 0 && errno == ELOOP) {
+                    chld_fd = openat(fd, chld_dirent->d_name, O_PATH | O_NOFOLLOW);
+                }
+
+                if (chld_fd < 0) {
+                    fprintf(stderr, "Could not open file %s: %s\n",
+                            chld_path.c_str(), strerror(errno));
+                    goto error_open;
+                }
+
                 DFS(chld_fd, chld_path, chld_dirent->d_name, tests);
+                close(chld_fd);
             }
 
-            close(chld_fd);
+
         error_open:;
             ofs += chld_dirent->d_reclen;
         }
