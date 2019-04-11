@@ -4,6 +4,7 @@
 #include <string.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <syscall.h>
 #include <unistd.h>
 
 #include <cstdlib>
@@ -12,6 +13,19 @@
 #include <queue>
 #include <vector>
 
+const size_t DENTS_BUFSIZE = 4096;
+
+struct linux_dirent {
+    unsigned long d_ino;     /* Inode number */
+    unsigned long d_off;     /* Offset to next linux_dirent */
+    unsigned short d_reclen; /* Length of this linux_dirent */
+    char d_name[];           /* Filename (null-terminated) */
+    /*
+    char           pad;       // Zero padding byte
+    char           d_type;    // File type (only since Linux
+                              // 2.6.4); offset is (d_reclen - 1)
+    */
+};
 using handler_type = std::vector<std::function<bool(
     std::string filename, struct stat*, const std::string&)>>;
 
@@ -29,10 +43,11 @@ void usage() {
 
 void DFS(int fd, std::string path, std::string filename,
          const handler_type& tests) {
-    DIR* dir;
     bool print = true;
-    struct dirent* chld_dirent;
+    int ret2;
     struct stat st;
+    struct linux_dirent* chld_dirent;
+    char dentsbuf[DENTS_BUFSIZE];
 
     int ret = fstat(fd, &st);
 
@@ -54,38 +69,41 @@ void DFS(int fd, std::string path, std::string filename,
         return;
     }
 
-    dir = fdopendir(fd);
+    while ((ret2 = syscall(SYS_getdents, fd, dentsbuf, sizeof(dentsbuf))) > 0) {
+        for (size_t ofs = 0; ofs < ret2;) {
+            chld_dirent = (linux_dirent*)(dentsbuf + ofs);
 
-    while (true) {
-        chld_dirent = readdir(dir);
+            std::string chld_path = path + "/" + chld_dirent->d_name;
 
-        if (!chld_dirent) {
-            break;
+            int chld_fd =
+                openat(fd, chld_dirent->d_name, O_RDONLY | O_NOFOLLOW);
+
+            if (chld_fd < 0 && errno == ELOOP) {
+                chld_fd = openat(fd, chld_dirent->d_name, O_PATH | O_NOFOLLOW);
+            }
+
+            if (chld_fd < 0) {
+                fprintf(stderr, "Could not open file %s: %s\n",
+                        chld_path.c_str(), strerror(errno));
+                goto error_open;
+            }
+
+            if (strcmp(chld_dirent->d_name, ".") &&
+                strcmp(chld_dirent->d_name, "..")) {
+                DFS(chld_fd, chld_path, chld_dirent->d_name, tests);
+            }
+
+            close(chld_fd);
+        error_open:;
+            ofs += chld_dirent->d_reclen;
         }
-        std::string chld_path = path + "/" + chld_dirent->d_name;
-
-        int chld_fd = openat(fd, chld_dirent->d_name, O_RDONLY | O_NOFOLLOW);
-
-        if (chld_fd < 0 && errno == ELOOP) {
-            chld_fd = openat(fd, chld_dirent->d_name, O_PATH | O_NOFOLLOW);
-        }
-
-        if (chld_fd < 0) {
-            fprintf(stderr, "Could not open file %s: %s\n", chld_path.c_str(),
-                    strerror(errno));
-            goto error_open;
-        }
-
-        if (strcmp(chld_dirent->d_name, ".") &&
-            strcmp(chld_dirent->d_name, "..")) {
-            DFS(chld_fd, chld_path, chld_dirent->d_name, tests);
-        }
-
-        close(chld_fd);
-    error_open:;
     }
 
-    closedir(dir);
+    if (ret2 < 0) {
+        fprintf(stderr, "Could not list directory %s: %s\n", path.c_str(),
+                strerror(errno));
+    }
+
 error_stat:;
 }
 
@@ -109,7 +127,6 @@ int main(int argc, char** argv) {
             tests.push_back([name = argv[i + 1]](const std::string& filename,
                                                  struct stat* st,
                                                  const std::string& path) {
-
                 return !strcmp(filename.c_str(), name);
             });
         } else if (!strcmp(argv[i], "-size")) {
@@ -120,7 +137,6 @@ int main(int argc, char** argv) {
                             : atoi(argv[i + 1] + 1)](
                     const std::string& filename, struct stat* st,
                     const std::string& path) {
-
                     switch (arg[0]) {
                         case '+':
                             return st->st_size > argi;
