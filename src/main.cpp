@@ -136,8 +136,8 @@ int main(int argc, char** argv) {
             tests.push_back(
                 [arg = argv[i + 1],
                  argi = (argv[i + 1][0] >= '0' && argv[i + 1][0] <= '9')
-                            ? atoi(argv[i + 1])
-                            : atoi(argv[i + 1] + 1)](
+                            ? atoll(argv[i + 1])
+                            : atoll(argv[i + 1] + 1)](
                     const std::string& filename, struct stat* st,
                     const std::string& path) {
                     switch (arg[0]) {
