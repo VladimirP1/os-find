@@ -123,7 +123,7 @@ int main(int argc, char** argv) {
     for (i = 2; i < argc - 1; i += 2) {
         if (!strcmp(argv[i], "-inum")) {
             tests.push_back(
-                [ino = atoi(argv[i + 1])](
+                [ino = atoll(argv[i + 1])](
                     const std::string& filename, struct stat* st,
                     const std::string& path) { return st->st_ino == ino; });
         } else if (!strcmp(argv[i], "-name")) {
